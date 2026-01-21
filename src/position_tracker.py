@@ -1,6 +1,5 @@
 """Absolute position tracking for 3D printer."""
 
-import time
 from typing import Optional
 
 import serial
@@ -19,7 +18,7 @@ class AbsolutePositionTracker:
 
     def __init__(self):
         """Initialize with unknown position."""
-        self.position = {"X": None, "Y": None, "Z": None}
+        self.position: dict[str, Optional[float]] = {"X": None, "Y": None, "Z": None}
 
     def set_position(self, axis: str, position: float) -> None:
         """Update known position for axis."""
