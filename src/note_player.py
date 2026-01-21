@@ -1,12 +1,11 @@
 """High-level API for playing notes on 3D printer."""
 
 import time
-from typing import Literal, Tuple, Union
+from typing import Literal
 
 import serial
 
 from .config import FREQUENCY_RANGES
-from .exceptions import OutOfBoundsError
 from .gcode_sender import send_gcode_with_retry
 from .motion_planner import MotionPlanner
 from .position_tracker import AbsolutePositionTracker

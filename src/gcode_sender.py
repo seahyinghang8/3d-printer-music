@@ -111,7 +111,7 @@ def send_gcode_with_retry(
                     # Printer busy, wait and check again
                     saw_busy = True
                     if debug:
-                        print(f"   (Printer busy, waiting for 'ok'...)")
+                        print("   (Printer busy, waiting for 'ok'...)")
                     time.sleep(0.05)  # Brief pause
                     # Don't break - keep waiting for "ok"
 

@@ -3,7 +3,7 @@
 import random
 from typing import Tuple
 
-from .config import FREQUENCY_RANGES, SAFE_LIMITS, STEPS_PER_MM
+from .config import STEPS_PER_MM
 from .exceptions import OutOfBoundsError
 
 
@@ -167,5 +167,6 @@ class MotionPlanner:
         """
         distance = self.calculate_distance(axis, frequency, duration)
         min_limit, max_limit = self.safe_limits[axis]
-        available_range = max_limit - min_limit
-        return distance <= available_range
+        available_range: float = max_limit - min_limit
+        result: bool = distance <= available_range
+        return result

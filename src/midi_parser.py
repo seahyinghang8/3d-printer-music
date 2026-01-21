@@ -64,7 +64,8 @@ def midi_note_to_frequency(midi_note: int) -> float:
     Returns:
         Frequency in Hz
     """
-    return 440.0 * (2.0 ** ((midi_note - 69) / 12.0))
+    result: float = 440.0 * (2.0 ** ((midi_note - 69) / 12.0))
+    return result
 
 
 def parse_midi_file(
@@ -182,7 +183,7 @@ def extract_melody_with_rests(notes: List[Note]) -> List[Tuple[Optional[float], 
     has_variation = len(set(velocities)) > 1
     default_volume = "normal" if has_variation else "loud"
 
-    melody = []
+    melody: List[Tuple[Optional[float], float, str]] = []
     current_time = 0.0
     i = 0
 
@@ -302,12 +303,12 @@ def print_melody_summary(notes: List[Note]) -> None:
     normal_count = sum(1 for n in notes if n.get_volume() == "normal")
     loud_count = sum(1 for n in notes if n.get_volume() == "loud")
 
-    print(f"\nVolume distribution:")
+    print("\nVolume distribution:")
     print(f"  Soft: {soft_count} notes ({soft_count/len(notes)*100:.1f}%)")
     print(f"  Normal: {normal_count} notes ({normal_count/len(notes)*100:.1f}%)")
     print(f"  Loud: {loud_count} notes ({loud_count/len(notes)*100:.1f}%)")
 
     # Show first few notes
-    print(f"\nFirst 5 notes:")
+    print("\nFirst 5 notes:")
     for i, note in enumerate(notes[:5]):
         print(f"  {i+1}. {note}")

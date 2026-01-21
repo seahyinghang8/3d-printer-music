@@ -6,12 +6,13 @@ Usage:
     python play_midi.py <midi_file> <track_index> [transpose_semitones]
 
 Example:
-    python play_midi.py library/jingle_bells_simple.mid 1
-    python play_midi.py library/jingle_bells_simple.mid 1 12  # transpose up one octave
-    python play_midi.py library/jingle_bells_simple.mid 1 auto  # auto-analyze and suggest transpose
+    python play_midi.py library/song.mid 1
+    python play_midi.py library/song.mid 1 12  # transpose up one octave
+    python play_midi.py library/song.mid 1 auto  # auto-analyze and suggest transpose
 """
 
 import sys
+from typing import cast, Literal
 from src import (
     find_printer_port,
     connect_to_printer,
@@ -28,9 +29,9 @@ from src.midi_parser import parse_midi_file, extract_melody_with_rests, print_me
 if len(sys.argv) < 3:
     print("Usage: python play_midi.py <midi_file> <track_index> [transpose_semitones]")
     print("\nExample:")
-    print("  python play_midi.py library/jingle_bells_simple.mid 1")
-    print("  python play_midi.py library/jingle_bells_simple.mid 1 12  # transpose up 1 octave")
-    print("  python play_midi.py library/jingle_bells_simple.mid 1 auto  # auto-analyze")
+    print("  python play_midi.py library/song.mid 1")
+    print("  python play_midi.py library/song.mid 1 12  # transpose up 1 octave")
+    print("  python play_midi.py library/song.mid 1 auto  # auto-analyze")
     print("\nTo preview tracks first, run:")
     print("  python preview_midi.py <midi_file>")
     sys.exit(1)
@@ -133,7 +134,9 @@ try:
             # Note
             print(f"[{i+1}/{len(melody)}] {frequency:.1f} Hz for {duration:.2f}s (volume: {volume})")
             try:
-                player.play_note_with_volume(frequency, duration, volume, debug=False)
+                # Cast volume to satisfy type checker - we know it's one of the valid literal values
+                volume_typed = cast(Literal["soft", "normal", "loud"], volume)
+                player.play_note_with_volume(frequency, duration, volume_typed, debug=False)
             except Exception as e:
                 print(f"  ⚠ Skipping note: {e}")
                 # Skip notes that can't be played
