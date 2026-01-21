@@ -1,17 +1,17 @@
 """Motion planning for frequency-based movements."""
 
 import random
-from typing import Tuple
+from typing import List
 
 from .config import STEPS_PER_MM
-from .exceptions import OutOfBoundsError
 
 
 class MotionPlanner:
     """
     Plan movements that stay within safe boundaries.
 
-    Uses DFS to find valid positions for note playback.
+    Uses boundary-aware direction selection and multi-segment movements
+    to ensure all movements stay within limits without raising errors.
     """
 
     def __init__(self, safe_limits: dict):
@@ -68,105 +68,83 @@ class MotionPlanner:
         axis: str,
         frequency: float,
         duration: float,
-        current_pos: float
-    ) -> Tuple[float, int]:
+        current_pos: float,
+        flip_direction: bool = False
+    ) -> List[float]:
         """
-        Find valid target position for note using DFS.
+        Plan one or more movements to play a note within safe boundaries.
 
-        Searches for position where:
-        1. Can move required distance for frequency/duration
-        2. Movement stays within safe boundaries
-        3. Randomly changes direction based on proximity to limits
+        The function determines initial direction based on proximity to boundaries:
+        - Closer to min limit: more likely to move towards max (positive direction)
+        - Closer to max limit: more likely to move towards min (negative direction)
+
+        If the required distance exceeds the available space in the chosen direction,
+        the function automatically splits the movement into multiple segments,
+        bouncing between boundaries until the total distance is covered.
 
         Args:
             axis: Axis to move
             frequency: Target frequency (Hz)
             duration: Note duration (seconds)
             current_pos: Current position on axis
+            flip_direction: If True, flip the direction from what would normally be chosen.
+                Useful for making consecutive notes with the same frequency sound more distinct.
+                Default is False (use normal boundary-based direction selection).
 
         Returns:
-            (target_position, direction)
-            - target_position: Where to move to (mm)
-            - direction: 1 for positive, -1 for negative
+            List of target positions (in mm). Each position represents where to move next.
+            Returns a list with one or more positions. Multiple positions occur
+            when the total distance requires bouncing between boundaries.
 
-        Raises:
-            OutOfBoundsError: No valid position found within boundaries
+        Example:
+            Single movement (fits within bounds):
+            [150.0]  # Move to 150mm
+
+            Multi-segment movement (exceeds bounds):
+            [10.0, 200.0, 150.0]  # Bounce between boundaries
         """
-        # Calculate required movement
-        distance = self.calculate_distance(axis, frequency, duration)
-
+        # Calculate total required movement distance
+        total_distance = self.calculate_distance(axis, frequency, duration)
         min_limit, max_limit = self.safe_limits[axis]
 
-        # Check if movement fits in available space
-        available_range = max_limit - min_limit
-        if distance > available_range:
-            raise OutOfBoundsError(
-                f"Movement requires {distance:.1f}mm but only {available_range:.1f}mm available"
-            )
-
-        # Calculate how far we are from the limits (normalized 0-1)
-        distance_to_min = (current_pos - min_limit) / available_range
-        distance_to_max = (max_limit - current_pos) / available_range
-
-        # The closer we are to a limit, the higher the probability of changing direction
-        # When near min limit (distance_to_min is small), probability to flip negative->positive is high
-        # When near max limit (distance_to_max is small), probability to flip positive->negative is high
-        direction = self.current_direction[axis]
-
-        if direction > 0:
-            # Moving towards max limit - probability of flip increases as we approach it
-            flip_probability = 1.0 - distance_to_max
+        # Determine initial direction
+        if flip_direction:
+            # Flip from current direction
+            direction = -self.current_direction[axis]
         else:
-            # Moving towards min limit - probability of flip increases as we approach it
-            flip_probability = 1.0 - distance_to_min
+            # Choose direction based on proximity to max limit
+            # Closer to max = more likely to go negative, closer to min = more likely to go positive
+            distance_to_max_ratio = (max_limit - current_pos) / (max_limit - min_limit)
+            direction = 1 if random.random() < distance_to_max_ratio else -1
 
-        # Random chance to flip direction based on proximity to limits
-        if random.random() < flip_probability:
-            direction = -direction
+        # Plan movements, potentially splitting across multiple segments
+        positions: List[float] = []
 
-        # Try the chosen direction
-        target_pos = current_pos + (distance * direction)
-
-        if min_limit <= target_pos <= max_limit:
-            # Update preferred direction for next time
+        incoming_boundary = max_limit if direction == 1 else min_limit
+        distance_to_boundary = abs(incoming_boundary - current_pos)
+        if distance_to_boundary >= total_distance:
+            # Single movement fits within bounds
+            target_pos = current_pos + direction * total_distance
+            positions.append(target_pos)
             self.current_direction[axis] = direction
-            return target_pos, direction
-
-        # Hit a boundary - must flip direction
-        direction = -direction
-        target_pos = current_pos + (distance * direction)
-
-        if min_limit <= target_pos <= max_limit:
-            # Update preferred direction for next time
+        else:
+            # Multiple segments needed
+            remaining_distance = total_distance - distance_to_boundary
+            # First move to boundary
+            positions.append(incoming_boundary)
+            direction *= -1  # Bounce off boundary
+            # Bounce between boundaries
+            full_range = max_limit - min_limit
+            num_bounces = int(remaining_distance // full_range)
+            for _ in range(num_bounces):
+                # Alternate direction each bounce
+                target_pos = max_limit if direction == 1 else min_limit
+                positions.append(target_pos)
+                direction *= -1
+            # Final segment
+            final_segment = remaining_distance % full_range
+            if final_segment > 0:
+                target_pos = (min_limit + final_segment) if direction == 1 else (max_limit - final_segment)
+                positions.append(target_pos)
             self.current_direction[axis] = direction
-            return target_pos, direction
-
-        # Both directions fail - we're trapped
-        # This happens when distance is too large for current position
-        raise OutOfBoundsError(
-            f"Cannot move {distance:.1f}mm from position {current_pos:.1f}mm "
-            f"within bounds [{min_limit}, {max_limit}]"
-        )
-
-    def validate_note_possible(
-        self,
-        axis: str,
-        frequency: float,
-        duration: float
-    ) -> bool:
-        """
-        Check if note can be played within boundaries.
-
-        Args:
-            axis: Motor axis
-            frequency: Target frequency (Hz)
-            duration: Note duration (seconds)
-
-        Returns:
-            True if note is possible, False otherwise
-        """
-        distance = self.calculate_distance(axis, frequency, duration)
-        min_limit, max_limit = self.safe_limits[axis]
-        available_range: float = max_limit - min_limit
-        result: bool = distance <= available_range
-        return result
+        return positions

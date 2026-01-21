@@ -39,10 +39,12 @@ X and Y axis can be moved at the same time through a diagonal motion. Otherwise,
   - Auto-analyze mode: Analyzes frequency range and suggests optimal transpose
   - Printers are louder at higher frequencies (1-12kHz range)
 
-- **Smart Motion**: Dynamic direction changes create more organic movement patterns
-  - Randomly changes direction based on proximity to limits
-  - Closer to boundary = higher probability of turning around
-  - Prevents repetitive back-and-forth patterns
+- **Smart Motion**: Boundary-aware movement planning ensures all notes can play
+  - Direction selection based on proximity to boundaries
+  - Closer to boundary = more likely to move toward opposite side
+  - Automatic multi-segment movements when distance exceeds available space
+  - Bounces between boundaries seamlessly to maintain correct frequency
+  - Never raises out-of-bounds errors - always finds a valid movement path
 
 We use uv for this project.
 
