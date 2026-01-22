@@ -93,3 +93,34 @@ uv run python play_midi.py library/jingle_bells_simple.mid 1 auto
 ```
 
 The auto-transpose mode analyzes your MIDI file and suggests the best transposition to shift notes into the 1-12kHz range where the printer is loudest, while staying within the printer's frequency capabilities.
+
+**3. Play a playlist** - queue multiple songs with settings:
+```bash
+uv run python play_midi_playlist.py playlist.yaml
+```
+
+Playlist features:
+- Play multiple songs in sequence
+- Trim songs with start/end time (skip long intros/outros)
+- Auto-transpose and auto-track selection per song
+- Shuffle mode: `--shuffle` flag
+- Live editing: modify YAML between tracks
+- Ctrl+C to skip current track
+- Progress tracking: resumes from where you left off
+- Auto-loop: when all tracks complete, playlist resets and plays again
+
+Example [playlist.yaml](playlist.yaml):
+```yaml
+items:
+  - filename: library/jingle-bells.mid
+    start_seconds: 0
+    end_seconds: 20
+    transpose: auto
+    track: auto
+    played: false
+  - filename: library/habanera.mid
+    start_seconds: 0
+    transpose: 12
+    track: 1
+    played: false
+```

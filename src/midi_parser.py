@@ -70,21 +70,27 @@ def midi_note_to_frequency(midi_note: int) -> float:
 
 def parse_midi_file(
     midi_path: str,
-    track_index: int = 0,
+    track_index: Optional[int] = None,
     tempo_scale: float = 1.0,
-    transpose_semitones: int = 0
-) -> List[Note]:
+    transpose_semitones: int = 0,
+    start_time: float = 0.0,
+    end_time: Optional[float] = None
+) -> Tuple[List[Note], int]:
     """
     Parse a MIDI file and extract notes with timing.
 
     Args:
         midi_path: Path to MIDI file
-        track_index: Which track to extract (default: 0 = first track)
+        track_index: Which track to extract (default: None = auto-select track with highest notes)
         tempo_scale: Scale tempo (1.0 = original, 0.5 = half speed, 2.0 = double speed)
         transpose_semitones: Number of semitones to transpose (positive = up, negative = down)
+        start_time: Start time in seconds (notes before this are filtered out)
+        end_time: End time in seconds (notes after this are filtered out, None = no limit)
 
     Returns:
-        List of Note objects with timing information
+        Tuple of (notes, selected_track_index)
+        - notes: List of Note objects with timing information
+        - selected_track_index: The track that was used (useful when auto-selecting)
     """
     try:
         midi_file = mido.MidiFile(midi_path)
@@ -95,6 +101,11 @@ def parse_midi_file(
                 f"Try opening the file in GarageBand or another MIDI editor and re-exporting it."
             )
         raise
+
+    # Auto-select track if not specified
+    if track_index is None:
+        track_index = _find_best_track(midi_file)
+        print(f"Auto-selected track {track_index} (highest average frequency)")
 
     # Get the track
     if track_index >= len(midi_file.tracks):
@@ -130,8 +141,8 @@ def parse_midi_file(
         elif msg.type == 'note_off' or (msg.type == 'note_on' and msg.velocity == 0):
             # Note ends
             if msg.note in active_notes:
-                start_time, velocity = active_notes.pop(msg.note)
-                duration = current_time - start_time
+                note_start_time, velocity = active_notes.pop(msg.note)
+                duration = current_time - note_start_time
 
                 # Apply transposition
                 transposed_note = msg.note + transpose_semitones
@@ -144,14 +155,92 @@ def parse_midi_file(
                     frequency=frequency,
                     duration=duration,
                     velocity=velocity,
-                    start_time=start_time
+                    start_time=note_start_time
                 )
                 notes.append(note)
 
     # Sort by start time
     notes.sort(key=lambda n: n.start_time)
 
-    return notes
+    # Filter notes by time window if specified
+    if start_time > 0 or end_time is not None:
+        filtered_notes = []
+        for note in notes:
+            note_end = note.start_time + note.duration
+
+            # Skip notes that end before or at start_time
+            if note_end <= start_time:
+                continue
+
+            # Skip notes that start at or after end_time
+            if end_time is not None and note.start_time >= end_time:
+                continue
+
+            # Trim notes that overlap the boundaries
+            adjusted_note = Note(
+                frequency=note.frequency,
+                duration=note.duration,
+                velocity=note.velocity,
+                start_time=note.start_time
+            )
+
+            # Trim start if note begins before start_time
+            if note.start_time < start_time:
+                # Adjust duration and start time
+                overlap = start_time - note.start_time
+                adjusted_note.duration = note.duration - overlap
+                adjusted_note.start_time = start_time
+
+            # Trim end if note extends past end_time
+            if end_time is not None:
+                note_end_adjusted = adjusted_note.start_time + adjusted_note.duration
+                if note_end_adjusted > end_time:
+                    adjusted_note.duration = end_time - adjusted_note.start_time
+
+            filtered_notes.append(adjusted_note)
+
+        notes = filtered_notes
+
+        # Adjust all note start times to be relative to start_time
+        for note in notes:
+            note.start_time -= start_time
+
+    return notes, track_index
+
+
+def _find_best_track(midi_file: mido.MidiFile) -> int:
+    """
+    Find the track with the highest average frequency (likely the melody).
+
+    The melody is typically in a higher register than bass or accompaniment parts.
+
+    Args:
+        midi_file: Loaded MIDI file
+
+    Returns:
+        Index of the best track to use
+    """
+    best_track_index = 0
+    highest_avg_freq = 0.0
+
+    for track_idx, track in enumerate(midi_file.tracks):
+        # Collect all note values from this track
+        note_values = []
+        for msg in track:
+            if msg.type == 'note_on' and msg.velocity > 0:
+                note_values.append(msg.note)
+
+        # Calculate average frequency if track has notes
+        if note_values:
+            avg_note = sum(note_values) / len(note_values)
+            avg_freq = midi_note_to_frequency(int(avg_note))
+
+            # Track with highest average frequency is usually the melody
+            if avg_freq > highest_avg_freq:
+                highest_avg_freq = avg_freq
+                best_track_index = track_idx
+
+    return best_track_index
 
 
 def extract_melody_with_rests(notes: List[Note]) -> List[Tuple[Optional[float], float, str]]:

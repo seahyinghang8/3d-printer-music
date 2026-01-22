@@ -13,6 +13,7 @@ from .gcode_sender import initialize_printer, send_gcode_with_retry
 from .motion_planner import MotionPlanner
 from .note_player import NotePlayer
 from .position_tracker import AbsolutePositionTracker, initialize_printer_position
+from .transposer import Transposer, create_transposer
 
 __all__ = [
     # Connection
@@ -28,6 +29,9 @@ __all__ = [
     "MotionPlanner",
     # Note playing
     "NotePlayer",
+    # Transposition
+    "Transposer",
+    "create_transposer",
     # Exceptions
     "PrinterMusicError",
     "GCodeError",

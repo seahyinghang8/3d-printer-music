@@ -1,7 +1,7 @@
 """High-level API for playing notes on 3D printer."""
 
 import time
-from typing import Literal
+from typing import Tuple
 
 import serial
 
@@ -10,18 +10,16 @@ from .gcode_sender import send_gcode_with_retry
 from .motion_planner import MotionPlanner
 from .position_tracker import AbsolutePositionTracker
 
-
-Axis = Literal["X", "Y", "Z"]
-Volume = Literal["soft", "normal", "loud"]
-
-
 class NotePlayer:
     """
     Simple API for playing notes on 3D printer motors.
 
+    All notes are played using diagonal movement (X and Y together).
+    Single notes play the same frequency on both axes.
+
     Usage:
         player = NotePlayer(serial_connection, tracker, planner)
-        player.play_note("Y", 440.0, 1.0)  # Play A4 for 1 second
+        player.play_note(440.0, 880.0, 1.0)  # Play two frequencies for 1 second
         player.pause(0.5)  # Pause for 0.5 seconds
     """
 
@@ -42,83 +40,151 @@ class NotePlayer:
         self.ser = ser
         self.tracker = tracker
         self.planner = planner
+        # Track last note frequency for each axis
+        self.last_note_x: float | None = None
+        self.last_note_y: float | None = None
+        # Track last direction for each axis
+        self.last_dir_x: int = -1
+        self.last_dir_y: int = -1
 
     def play_note(
         self,
-        axis: Axis,
-        frequency: float,
+        freq_1: float,
+        freq_2: float,
         duration: float,
+        volume: str = "normal",
         debug: bool = False
     ) -> None:
         """
-        Play a note by moving motor at specific frequency.
+        Play one or two frequencies simultaneously using diagonal movement.
 
-        If the required movement distance exceeds available space, the function
-        automatically executes multiple back-and-forth movements to maintain
-        the correct frequency throughout the entire duration.
+        For a single note, pass the same frequency twice.
+        For a chord, pass two different frequencies.
+
+        Volume controls which axes are used for single notes (freq_1 == freq_2):
+        - "loud": Both X and Y axes (diagonal movement)
+        - "normal": Y axis only
+        - "soft": X axis only
+        For chords (freq_1 != freq_2), volume is ignored and both axes are used.
+
+        The motion planner automatically assigns higher frequency to X axis
+        and lower frequency to Y axis when both are used.
 
         Blocking call - returns after note completes.
 
         Args:
-            axis: Which axis to use ("X", "Y", or "Z")
-            frequency: Frequency in Hz
+            freq_1: First frequency in Hz
+            freq_2: Second frequency in Hz
             duration: Duration in seconds
+            volume: Volume level ("loud", "normal", or "soft"), only used for single notes
             debug: Print debug information
 
         Raises:
             ValueError: Invalid frequency or unknown position
         """
-        # Validate frequency is in range for axis
-        min_freq, max_freq = FREQUENCY_RANGES[axis]
-        if not (min_freq <= frequency <= max_freq):
-            raise ValueError(
-                f"Frequency {frequency} Hz out of range for {axis} axis "
-                f"[{min_freq}, {max_freq}]"
-            )
+        # Validate frequencies are in range
+        for freq in [freq_1, freq_2]:
+            # Use X axis range since we assign higher freq to X
+            min_freq, max_freq = FREQUENCY_RANGES["X"]
+            if not (min_freq <= freq <= max_freq):
+                raise ValueError(
+                    f"Frequency {freq} Hz out of range [{min_freq}, {max_freq}]"
+                )
 
-        # Get current position
-        current_pos = self.tracker.get_position(axis)
-        if current_pos is None:
-            raise ValueError(f"Unknown position for {axis} axis. Initialize tracker first.")
+        # Get current positions
+        x0 = self.tracker.get_position("X")
+        y0 = self.tracker.get_position("Y")
+        if x0 is None or y0 is None:
+            raise ValueError("Unknown position. Initialize tracker first.")
 
-        # Plan movement(s) - may return multiple segments if distance is large
-        positions = self.planner.plan_note_movement(
-            axis, frequency, duration, current_pos
+        # Check if this is a single note or a chord
+        is_single_note = abs(freq_1 - freq_2) < 1e-6
+
+        # Determine which axes to use based on volume (only for single notes)
+        if is_single_note:
+            # loud: both axes (diagonal), normal: Y only, soft: X only
+            use_x_axis = volume in ["loud", "soft"]
+            use_y_axis = volume in ["loud", "normal"]
+        else:
+            # For chords, always use both axes
+            use_x_axis = True
+            use_y_axis = True
+
+        # Determine frequencies for each axis
+        # Motion planner assigns higher freq to X, lower to Y
+        freq_x = max(freq_1, freq_2) if use_x_axis else None
+        freq_y = min(freq_1, freq_2) if use_y_axis else None
+
+        # Determine override directions based on whether frequencies match previous notes
+        override_dir_x = None
+        override_dir_y = None
+
+        # If X frequency is same as last time, flip X direction
+        if freq_x is not None and self.last_note_x is not None and abs(freq_x - self.last_note_x) < 1e-6:
+            override_dir_x = -self.last_dir_x
+
+        # If Y frequency is same as last time, flip Y direction
+        if freq_y is not None and self.last_note_y is not None and abs(freq_y - self.last_note_y) < 1e-6:
+            override_dir_y = -self.last_dir_y
+
+        # Plan movement
+        waypoints, feedrate, dir_x, dir_y = self.planner.plan_movement(
+            freq_x, freq_y, duration, x0, y0,
+            override_dir_x=override_dir_x, override_dir_y=override_dir_y
         )
 
-        # Calculate feedrate for the frequency
-        feedrate = self.planner.frequency_to_feedrate(axis, frequency)
+        # Store the frequencies and directions that were used
+        self.last_note_x = freq_x
+        self.last_note_y = freq_y
+        if dir_x is not None:
+            self.last_dir_x = dir_x
+        if dir_y is not None:
+            self.last_dir_y = dir_y
 
         if debug:
-            # Calculate total distance across all segments
-            pos = current_pos
+            # Calculate total distance
             total_distance = 0.0
-            for target_pos in positions:
-                total_distance += abs(target_pos - pos)
-                pos = target_pos
-            print(f"Playing {frequency:.1f} Hz on {axis} for {duration:.2f}s")
-            print(f"  Total distance: {total_distance:.1f}mm across {len(positions)} segment(s)")
+            x_prev, y_prev = x0, y0
+            for x, y in waypoints:
+                dx = x - x_prev
+                dy = y - y_prev
+                total_distance += (dx * dx + dy * dy) ** 0.5
+                x_prev, y_prev = x, y
+
+            freq_x = max(freq_1, freq_2)
+            freq_y = min(freq_1, freq_2)
+            print(f"Playing: X={freq_x:.1f} Hz, Y={freq_y:.1f} Hz for {duration:.2f}s")
+            print(f"  Total distance: {total_distance:.1f}mm across {len(waypoints)} waypoint(s)")
             print(f"  Feedrate: {feedrate:.1f} mm/min")
 
         # Execute all movements
         segment_start_time = time.time()
-        for i, target_pos in enumerate(positions):
-            current = self.tracker.get_position(axis)
-            if current is None:
-                raise ValueError(f"Lost position tracking for {axis} axis during movement.")
 
-            distance = abs(target_pos - current)
-            direction_str = "positive" if target_pos > current else "negative"
+        for i, (target_x, target_y) in enumerate(waypoints):
+            current_x = self.tracker.get_position("X")
+            current_y = self.tracker.get_position("Y")
+            if current_x is None or current_y is None:
+                raise ValueError("Lost position tracking during movement.")
+
+            dx = target_x - current_x
+            dy = target_y - current_y
+            distance = (dx * dx + dy * dy) ** 0.5
 
             if debug:
-                print(f"  Segment {i+1}/{len(positions)}: {current:.1f}mm -> {target_pos:.1f}mm "
-                      f"({distance:.1f}mm {direction_str})")
+                print(f"  Waypoint {i+1}/{len(waypoints)}: "
+                      f"({current_x:.1f}, {current_y:.1f}) -> ({target_x:.1f}, {target_y:.1f}) "
+                      f"[{distance:.1f}mm]")
 
-            # Execute movement
-            self.tracker.move_to(self.ser, axis, target_pos, feedrate, debug=debug)
+            # Execute diagonal movement
+            command = f"G1 X{target_x:.3f} Y{target_y:.3f} F{feedrate:.1f}"
+            send_gcode_with_retry(self.ser, command, debug=debug)
 
-            # Calculate time for this segment based on distance and feedrate
-            segment_duration = (distance / (feedrate / 60.0))
+            # Update tracker
+            self.tracker.set_position("X", target_x)
+            self.tracker.set_position("Y", target_y)
+
+            # Calculate segment duration based on distance and feedrate
+            segment_duration = distance / (feedrate / 60.0)
             time.sleep(segment_duration)
 
         # Calculate any remaining time (due to rounding or small discrepancies)
@@ -135,189 +201,3 @@ class NotePlayer:
             duration: Pause duration in seconds
         """
         time.sleep(duration)
-
-    def play_note_diagonal(
-        self,
-        frequency_low: float,
-        frequency_high: float,
-        duration: float,
-        debug: bool = False
-    ) -> None:
-        """
-        Play two notes simultaneously on X and Y axes (diagonal motion).
-
-        Lower frequency plays on Y axis, higher frequency on X axis.
-        Moves both axes at the same time, producing two frequencies.
-
-        If either axis requires multiple segments due to boundary constraints,
-        the movements are synchronized to maintain both frequencies throughout
-        the entire duration. Both axes will execute their movements in parallel,
-        bouncing off boundaries as needed.
-
-        Args:
-            frequency_low: Lower frequency in Hz (will play on Y axis)
-            frequency_high: Higher frequency in Hz (will play on X axis)
-            duration: Duration in seconds
-            debug: Print debug information
-
-        Raises:
-            ValueError: Invalid frequency or unknown position
-        """
-        # Assign frequencies: lower on Y (closest to user), higher on X
-        frequency_y = frequency_low
-        frequency_x = frequency_high
-
-        # Validate frequencies
-        for axis, freq in [("X", frequency_x), ("Y", frequency_y)]:
-            min_freq, max_freq = FREQUENCY_RANGES[axis]
-            if not (min_freq <= freq <= max_freq):
-                raise ValueError(
-                    f"Frequency {freq} Hz out of range for {axis} axis "
-                    f"[{min_freq}, {max_freq}]"
-                )
-
-        # Get current positions
-        current_x = self.tracker.get_position("X")
-        current_y = self.tracker.get_position("Y")
-        if current_x is None or current_y is None:
-            raise ValueError("Unknown position. Initialize tracker first.")
-
-        # Plan movements for both axes (may return multiple segments)
-        positions_x = self.planner.plan_note_movement("X", frequency_x, duration, current_x)
-        positions_y = self.planner.plan_note_movement("Y", frequency_y, duration, current_y)
-
-        # Calculate feedrates for each axis
-        feedrate_x = self.planner.frequency_to_feedrate("X", frequency_x)
-        feedrate_y = self.planner.frequency_to_feedrate("Y", frequency_y)
-
-        if debug:
-            # Calculate total distances
-            temp_pos_x = current_x
-            total_distance_x = 0.0
-            for target_pos in positions_x:
-                total_distance_x += abs(target_pos - temp_pos_x)
-                temp_pos_x = target_pos
-
-            temp_pos_y = current_y
-            total_distance_y = 0.0
-            for target_pos in positions_y:
-                total_distance_y += abs(target_pos - temp_pos_y)
-                temp_pos_y = target_pos
-
-            print(f"Playing diagonal: X={frequency_x:.1f} Hz, Y={frequency_y:.1f} Hz for {duration:.2f}s")
-            print(f"  X: {len(positions_x)} segment(s), total distance: {total_distance_x:.1f}mm")
-            print(f"  Y: {len(positions_y)} segment(s), total distance: {total_distance_y:.1f}mm")
-            print(f"  Feedrates: X={feedrate_x:.1f}, Y={feedrate_y:.1f} mm/min")
-
-        # Execute movements - need to interleave both axes' segments
-        # We'll process both position lists simultaneously
-        segment_start_time = time.time()
-
-        idx_x = 0
-        idx_y = 0
-
-        while idx_x < len(positions_x) or idx_y < len(positions_y):
-            # Get next target for each axis (or stay at current position if done)
-            if idx_x < len(positions_x):
-                target_x = positions_x[idx_x]
-                current_x_pos = self.tracker.get_position("X")
-                if current_x_pos is None:
-                    raise ValueError("Lost position tracking for X axis during movement.")
-                distance_x = abs(target_x - current_x_pos)
-                idx_x += 1
-            else:
-                # X is done, stay at current position
-                current_x_pos = self.tracker.get_position("X")
-                if current_x_pos is None:
-                    raise ValueError("Lost position tracking for X axis during movement.")
-                target_x = current_x_pos
-                distance_x = 0.0
-
-            if idx_y < len(positions_y):
-                target_y = positions_y[idx_y]
-                current_y_pos = self.tracker.get_position("Y")
-                if current_y_pos is None:
-                    raise ValueError("Lost position tracking for Y axis during movement.")
-                distance_y = abs(target_y - current_y_pos)
-                idx_y += 1
-            else:
-                # Y is done, stay at current position
-                current_y_pos = self.tracker.get_position("Y")
-                if current_y_pos is None:
-                    raise ValueError("Lost position tracking for Y axis during movement.")
-                target_y = current_y_pos
-                distance_y = 0.0
-
-            if debug:
-                print(f"  Segment: X {current_x_pos:.1f}->{target_x:.1f}mm, Y {current_y_pos:.1f}->{target_y:.1f}mm")
-
-            # Execute diagonal movement using the appropriate feedrate
-            # Use the higher feedrate to maintain timing
-            feedrate = max(feedrate_x, feedrate_y)
-            command = f"G1 X{target_x:.3f} Y{target_y:.3f} F{feedrate:.1f}"
-            send_gcode_with_retry(self.ser, command, debug=debug)
-
-            # Update tracker
-            self.tracker.set_position("X", target_x)
-            self.tracker.set_position("Y", target_y)
-
-            # Calculate segment duration based on the longer movement
-            # Time = distance / (feedrate / 60) for each axis
-            if distance_x > 0:
-                duration_x = distance_x / (feedrate_x / 60.0)
-            else:
-                duration_x = 0.0
-
-            if distance_y > 0:
-                duration_y = distance_y / (feedrate_y / 60.0)
-            else:
-                duration_y = 0.0
-
-            segment_duration = max(duration_x, duration_y)
-            time.sleep(segment_duration)
-
-        # Calculate any remaining time
-        elapsed = time.time() - segment_start_time
-        remaining = duration - elapsed
-        if remaining > 0.001:
-            time.sleep(remaining)
-
-    def play_note_with_volume(
-        self,
-        frequency: float,
-        duration: float,
-        volume: Volume = "normal",
-        debug: bool = False
-    ) -> None:
-        """
-        Play a note with volume control using different axes.
-
-        Volume modes:
-        - "soft": Uses X axis only (quieter, farther from user)
-        - "normal": Uses Y axis only (normal volume, closest to user)
-        - "loud": Uses both X and Y axes moving equally (louder, combined sound)
-
-        If movements require bouncing between boundaries, this is handled
-        automatically by the underlying play_note methods.
-
-        Args:
-            frequency: Frequency in Hz
-            duration: Duration in seconds
-            volume: Volume mode ("soft", "normal", or "loud")
-            debug: Print debug information
-
-        Raises:
-            ValueError: Invalid frequency or volume mode
-        """
-        if volume == "soft":
-            # Use X axis (farther from user = quieter)
-            self.play_note("X", frequency, duration, debug=debug)
-        elif volume == "normal":
-            # Use Y axis (closest to user = normal volume)
-            self.play_note("Y", frequency, duration, debug=debug)
-        elif volume == "loud":
-            # Use both axes moving equally (combined = louder)
-            # Both play the same frequency for maximum volume
-            self.play_note_diagonal(frequency, frequency, duration, debug=debug)
-        else:
-            raise ValueError(f"Invalid volume mode: {volume}. Must be 'soft', 'normal', or 'loud'")
