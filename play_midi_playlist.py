@@ -210,7 +210,7 @@ def main():
                 print("\n✓ All tracks completed!")
                 print("Resetting playlist before ending...")
                 playlist_manager.reset_played_status()
-                break
+                continue
 
             item_index, item = next_item
             track_count += 1

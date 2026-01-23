@@ -5,60 +5,40 @@ items:
   transpose: auto
   track: auto
   played: true
-- filename: library/never-gonna-give-you-up.mid
-  start_seconds: 0
-  transpose: auto
-  track: auto
-  played: false
 - filename: library/a-space-odyssey.mid
-  start_seconds: 0
+  start_seconds: 18
   transpose: auto
-  track: auto
-  played: false
+  track: 0
+  played: true
 - filename: library/alla-turca.mid
   start_seconds: 0
   transpose: auto
   track: auto
-  played: false
+  played: true
 - filename: library/bach-846.mid
   start_seconds: 0
   transpose: auto
   track: auto
-  played: false
+  played: true
 - filename: library/brillante-waltz.mid
   start_seconds: 0
   transpose: auto
   track: auto
-  played: false
+  played: true
 - filename: library/circus.mid
   start_seconds: 0
   transpose: auto
   track: auto
-  played: false
-- filename: library/debussy-clair-de-lune.mid
-  start_seconds: 0
-  transpose: auto
-  track: auto
-  played: false
-- filename: library/harry-potter.mid
-  start_seconds: 0
-  transpose: auto
-  track: auto
-  played: false
+  played: true
 - filename: library/hey-jude.mid
   start_seconds: 0
   transpose: auto
   track: auto
   played: false
-- filename: library/lotr-the-ring-goes-south.mid
+- filename: library/habanera.mid
   start_seconds: 0
   transpose: auto
-  track: auto
-  played: false
-- filename: library/lotr-the-shire.mid
-  start_seconds: 0
-  transpose: auto
-  track: auto
+  track: 4
   played: false
 - filename: library/mario-theme.mid
   start_seconds: 0
@@ -69,22 +49,6 @@ items:
   start_seconds: 0
   transpose: auto
   track: auto
-  played: false
-- filename: library/pokemon-theme.mid
-  start_seconds: 0
-  transpose: auto
-  track: auto
-  played: false
-- filename: library/star-wars-theme.mid
-  start_seconds: 0
-  transpose: auto
-  track: auto
-  played: false
-- filename: library/swan-lake.mid
-  start_seconds: 0
-  end_seconds: 45
-  transpose: 0
-  track: 4
   played: false
 - filename: library/twinkle-twinkle-little-star.mid
   start_seconds: 0
